@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Road Network Simulator</title>
+<style>
+    canvas {
+        border: 1px solid black;
+    }
+</style>
+</head>
+<body>
+<h1>Road Network Simulator</h1>
+<canvas id="canvas" width="800" height="600"></canvas>
+<br>
+<label for="trafficVolume">Traffic Volume:</label>
+<input type="range" id="trafficVolume" name="trafficVolume" min="0" max="100" value="50">
+<br>
+<button onclick="startSimulation()">Start Simulation</button>
+<button onclick="stopSimulation()">Stop Simulation</button>
+<br>
+<button onclick="startDrawingRoad()">Start Drawing Road</button>
+<button onclick="stopDrawingRoad()">Stop Drawing Road</button>
+<button onclick="clearCanvas()">Clear Canvas</button>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const trafficVolumeInput = document.getElementById('trafficVolume');
+    let simulationInterval;
+    let drawingRoad = false;
+    let roadPoints = [];
+    let cars = [];
+    const carSpeed = 2;
+
+    // Sample road network data
+    let roadNetwork = [];
+
+    function startSimulation() {
+        simulationInterval = setInterval(simulateTraffic, 1000 / 60); // 60 frames per second
+    }
+
+    function stopSimulation() {
+        clearInterval(simulationInterval);
+    }
+
+    function startDrawingRoad() {
+        drawingRoad = true;
+        roadPoints = [];
+        canvas.addEventListener('click', addRoadPoint);
+    }
+
+    function stopDrawingRoad() {
+        drawingRoad = false;
+        canvas.removeEventListener('click', addRoadPoint);
+        if (roadPoints.length > 1) {
+            roadNetwork.push({ type: 'road', points: roadPoints });
+            drawRoad(roadPoints);
+        }
+    }
+
+    function addRoadPoint(event) {
+        if (drawingRoad) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+            roadPoints.push({ x: mouseX, y: mouseY });
+            if (roadPoints.length > 1) {
+                const lastPoint = roadPoints[roadPoints.length - 1];
+                const secondLastPoint = roadPoints[roadPoints.length - 2];
+                ctx.beginPath();
+                ctx.moveTo(secondLastPoint.x, secondLastPoint.y);
+                ctx.lineTo(lastPoint.x, lastPoint.y);
+                ctx.stroke();
+            }
+        }
+    }
+
+    function clearCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        roadNetwork = [];
+    }
+
+    function simulateTraffic() {
+        const trafficVolume = parseInt(trafficVolumeInput.value);
+        // Generate new cars based on traffic volume
+        if (Math.random() * 100 < trafficVolume) {
+            generateCar();
+        }
+        // Move cars
+        moveCars();
+        // Update traffic simulation on canvas
+        drawTraffic();
+    }
+
+    function generateCar() {
+        const randomRoadIndex = Math.floor(Math.random() * roadNetwork.length);
+        const road = roadNetwork[randomRoadIndex];
+        const car = {
+            x: road.points[0].x,
+            y: road.points[0].y,
+            targetPointIndex: 1,
+            targetX: road.points[1].x,
+            targetY: road.points[1].y
+        };
+        cars.push(car);
+    }
+
+    function moveCars() {
+        for (let i = cars.length - 1; i >= 0; i--) {
+            const car = cars[i];
+            const dx = car.targetX - car.x;
+            const dy = car.targetY - car.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const ratio = carSpeed / distance;
+            car.x += dx * ratio;
+            car.y += dy * ratio;
+            // Check if car reaches the target point
+            if (Math.abs(dx) < carSpeed && Math.abs(dy) < carSpeed) {
+                // Move to the next target point
+                car.targetPointIndex++;
+                if (car.targetPointIndex < roadNetwork[car.roadIndex].points.length) {
+                    car.targetX = roadNetwork[car.roadIndex].points[car.targetPointIndex].x;
+                    car.targetY = roadNetwork[car.roadIndex].points[car.targetPointIndex].y;
+                } else {
+                    // If reached the end of the road, remove the car
+                    cars.splice(i, 1);
+                }
+            }
+        }
+    }
+
+    function drawTraffic() {
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Draw road network, intersections, roundabouts, etc.
+        roadNetwork.forEach((road) => {
+            drawRoad(road.points);
+        });
+        // Draw cars
+        cars.forEach((car) => {
+            drawCar(car.x, car.y);
+        });
+    }
+
+    function drawRoad(points) {
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.stroke();
+    }
+
+    function drawCar(x, y) {
+        ctx.fillStyle = 'red';
+        ctx.fillRect(x - 5, y - 5, 10, 10);
+    }
+
+</script>
+</body>
+</html>
