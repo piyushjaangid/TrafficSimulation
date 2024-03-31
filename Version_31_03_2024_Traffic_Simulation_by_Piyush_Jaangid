@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Road Network Simulator</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            height: 800px;
+            z-index: 0;
+        }
+
+        #roadCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        canvas {
+            border: 10px solid black;
+        }
+
+        #chartContainer {
+            position: absolute;
+            top: 800px;
+            left: 0;
+            width: 500%;
+            height: 200px;
+        }
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <h1>Road Network Simulator</h1>
+    <div id="map"></div>
+    <canvas id="roadCanvas"></canvas>
+    <br />
+    <label for="trafficVolume">Traffic Volume (PCU per hour):</label>
+    <input id="trafficVolume" max="100" min="0" name="trafficVolume" type="number" value="50" />
+    <br />
+    <label for="calibrateLength">Calibrate Road Length (meters):</label>
+    <input id="calibrateLength" type="number" value="1" />
+    <br />
+    <button onclick="startSimulation()">Start Simulation</button>
+    <button onclick="stopSimulation()">Stop Simulation</button>
+    <br />
+    <button onclick="startDrawingRoad()">Start Drawing Road</button>
+    <button onclick="stopDrawingRoad()">Stop Drawing Road</button>
+    <button onclick="clearCanvas()">Clear Canvas</button>
+    <div id="status">Ready</div>
+
+    <div id="chartContainer">
+        <canvas id="chart"></canvas>
+    </div>
+
+    <script>
+        const map = L.map('map').setView([28.6139, 77.209], 13); // Delhi coordinates: [latitude, longitude], zoom level
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        const roadCanvas = document.getElementById('roadCanvas');
+        roadCanvas.width = map.getSize().x;
+        roadCanvas.height = map.getSize().y;
+        const ctx = roadCanvas.getContext('2d');
+        const trafficVolumeInput = document.getElementById('trafficVolume');
+        const calibrateLengthInput = document.getElementById('calibrateLength');
+        let simulationInterval;
+        let drawingRoad = false;
+        let roadPoints = [];
+        let cars = [];
+        const carSpeed = 2;
+        let roadNetwork = [];
+        let statusText = document.getElementById('status');
+        let chart;
+        let roadLength = 0;
+
+        function startSimulation() {
+            statusText.innerText = "Simulation started";
+            simulationInterval = setInterval(simulateTraffic, 1000 / 60); // 60 frames per second
+        }
+
+        function stopSimulation() {
+            statusText.innerText = "Simulation stopped";
+            clearInterval(simulationInterval);
+        }
+
+        function startDrawingRoad() {
+            statusText.innerText = "Drawing road";
+            drawingRoad = true;
+            roadPoints = [];
+            roadCanvas.addEventListener('click', addRoadPoint);
+        }
+
+        function stopDrawingRoad() {
+            statusText.innerText = "Road drawn";
+            drawingRoad = false;
+            roadCanvas.removeEventListener('click', addRoadPoint);
+            if (roadPoints.length > 1) {
+                roadNetwork.push({ type: 'road', points: roadPoints });
+                drawRoad(roadPoints);
+                calculateRoadLength();
+            }
+        }
+
+        function addRoadPoint(event) {
+            if (drawingRoad) {
+                const rect = roadCanvas.getBoundingClientRect();
+                const mouseX = event.clientX - rect.left;
+                const mouseY = event.clientY - rect.top;
+                roadPoints.push({ x: mouseX, y: mouseY });
+                if (roadPoints.length > 1) {
+                    const lastPoint = roadPoints[roadPoints.length - 1];
+                    const secondLastPoint = roadPoints[roadPoints.length - 2];
+                    ctx.beginPath();
+                    ctx.moveTo(secondLastPoint.x, secondLastPoint.y);
+                    ctx.lineTo(lastPoint.x, lastPoint.y);
+                    ctx.strokeStyle = 'grey';
+                    ctx.lineWidth = 50;
+                    ctx.stroke();
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 1;
+                }
+            }
+        }
+
+        function clearCanvas() {
+            statusText.innerText = "Canvas cleared";
+            ctx.clearRect(0, 0, roadCanvas.width, roadCanvas.height);
+            roadNetwork = [];
+            roadLength = 0;
+        }
+
+        function simulateTraffic() {
+            const trafficVolume = parseInt(trafficVolumeInput.value);
+            if (Math.random() * 100 < trafficVolume) {
+                generateCar();
+            }
+            moveCars();
+            updateChart(trafficVolume);
+            drawTraffic();
+        }
+
+        function generateCar() {
+            const randomRoadIndex = Math.floor(Math.random() * roadNetwork.length);
+            const road = roadNetwork[randomRoadIndex];
+            const car = {
+                x: road.points[0].x,
+                y: road.points[0].y,
+                targetPointIndex: 1,
+                roadIndex: randomRoadIndex,
+                targetX: road.points[1].x,
+                targetY: road.points[1].y
+            };
+            cars.push(car);
+        }
+
+        function moveCars() {
+            for (let i = cars.length - 1; i >= 0; i--) {
+                const car = cars[i];
+                const dx = car.targetX - car.x;
+                const dy = car.targetY - car.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const ratio = carSpeed / distance;
+                car.x += dx * ratio;
+                car.y += dy * ratio;
+                if (Math.abs(dx) < carSpeed && Math.abs(dy) < carSpeed) {
+                    if (car.targetPointIndex < roadNetwork[car.roadIndex].points.length) {
+                        const nextPoint = roadNetwork[car.roadIndex].points[car.targetPointIndex];
+                        if (nextPoint.turn) {
+                            car.targetPointIndex += nextPoint.turn;
+                            car.targetX = roadNetwork[car.roadIndex].points[car.targetPointIndex].x;
+                            car.targetY = roadNetwork[car.roadIndex].points[car.targetPointIndex].y;
+                        } else {
+                            car.targetPointIndex++;
+                            if (car.targetPointIndex < roadNetwork[car.roadIndex].points.length) {
+                                car.targetX = roadNetwork[car.roadIndex].points[car.targetPointIndex].x;
+                                car.targetY = roadNetwork[car.roadIndex].points[car.targetPointIndex].y;
+                            } else {
+                                cars.splice(i, 1);
+                            }
+                        }
+                    } else {
+                        cars.splice(i, 1);
+                    }
+                }
+            }
+        }
+
+        function drawTraffic() {
+            ctx.clearRect(0, 0, roadCanvas.width, roadCanvas.height);
+            roadNetwork.forEach((road) => {
+                drawRoad(road.points);
+            });
+            cars.forEach((car) => {
+                drawCar(car.x, car.y);
+            });
+        }
+
+        function drawRoad(points) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+            ctx.strokeStyle = 'grey'; // Set the stroke color to grey
+            ctx.lineWidth = 50; // Set the line width to 50 times the current width
+            ctx.stroke();
+            ctx.strokeStyle = 'black'; // Reset the stroke color to black
+            ctx.lineWidth = 1; // Reset the line width to default
+        }
+
+        function drawCar(x, y) {
+            ctx.fillStyle = 'red';
+            ctx.fillRect(x - 5, y - 5, 10, 10);
+        }
+
+        function calculateRoadLength() {
+            const calibrateLength = parseInt(calibrateLengthInput.value);
+            const bounds = new L.LatLngBounds(roadPoints.map(p => L.latLng(p.y, p.x)));
+            const sw = bounds.getSouthWest();
+            const ne = bounds.getNorthEast();
+            const latLngDistance = L.latLng(sw.lat, sw.lng).distanceTo(L.latLng(ne.lat, ne.lng));
+            roadLength = calibrateLength / latLngDistance * bounds.toBBoxString().split(',').map(parseFloat).reduce((acc, val, i) => i % 2 === 0 ? acc + val : acc + val) / 2;
+        }
+
+        function updateChart(trafficVolume) {
+            const trafficDensity = cars.length > 0 ? cars.length / roadLength : 0;
+            if (!chart) {
+                const ctx = document.getElementById('chart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Traffic Density (PCU/km)',
+                            data: [],
+                            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                position: 'bottom',
+                                title: {
+                                    display: true,
+                                    text: 'Traffic Volume (PCU/hr)'
+                                }
+                            },
+                            y: {
+                                type: 'linear',
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Traffic Density (PCU/km)'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            chart.data.labels.push(trafficVolume);
+            chart.data.datasets[0].data.push(trafficDensity);
+            if (chart.data.labels.length > 10) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+            }
+            chart.update();
+        }
+    </script>
+</body>
+
+</html>
